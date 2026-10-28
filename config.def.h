@@ -5,8 +5,8 @@
  *
  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
  */
-static char *font = "VictorMono Nerd Font:pixelsize=14:antialias=true:autohint=true";
-static int borderpx = 10;
+static char *font = "Liberation Mono:pixelsize=12:antialias=true:autohint=true";
+static int borderpx = 2;
 
 /*
  * What program is execed by st depends of these precedence rules:
@@ -121,7 +121,7 @@ static const char *colorname[] = {
 	"#cccccc",
 	"#555555",
 	"gray90", /* default foreground colour */
-	"#121314", /* default background colour */
+	"black", /* default background colour */
 };
 
 
@@ -135,20 +135,13 @@ unsigned int defaultcs = 256;
 static unsigned int defaultrcs = 257;
 
 /*
- * https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Functions-using-CSI-_-ordered-by-the-final-character-lparen-s-rparen:CSI-Ps-SP-q.1D81
- * Default style of cursor
- * 0: blinking block
- * 1: blinking block (default)
- * 2: steady block ("█")
- * 3: blinking underline
- * 4: steady underline ("_")
- * 5: blinking bar
- * 6: steady bar ("|")
- * 7: blinking st cursor
- * 8: steady st cursor
+ * Default shape of cursor
+ * 2: Block ("█")
+ * 4: Underline ("_")
+ * 6: Bar ("|")
+ * 7: Snowman ("☃")
  */
-static unsigned int cursorstyle = 1;
-static Rune stcursor = 0x2603; /* snowman ("☃") */
+static unsigned int cursorshape = 2;
 
 /*
  * Default columns and rows numbers
@@ -185,10 +178,11 @@ static MouseShortcut mshortcuts[] = {
 	/* mask                 button   function        argument       release */
 	{ XK_ANY_MOD,           Button2, selpaste,       {.i = 0},      1 },
 	{ ShiftMask,            Button4, ttysend,        {.s = "\033[5;2~"} },
+	{ XK_ANY_MOD,           Button4, ttysend,        {.s = "\031"} },
 	{ ShiftMask,            Button5, ttysend,        {.s = "\033[6;2~"} },
-	{ XK_ANY_MOD,           Button4, kscrollup,      {.i = 3},      0 },
-	{ XK_ANY_MOD,           Button5, kscrolldown,    {.i = 3},      0 },
+	{ XK_ANY_MOD,           Button5, ttysend,        {.s = "\005"} },
 };
+
 /* Internal keyboard shortcuts. */
 #define MODKEY Mod1Mask
 #define TERMMOD (ControlMask|ShiftMask)
@@ -207,8 +201,6 @@ static Shortcut shortcuts[] = {
 	{ TERMMOD,              XK_Y,           selpaste,       {.i =  0} },
 	{ ShiftMask,            XK_Insert,      selpaste,       {.i =  0} },
 	{ TERMMOD,              XK_Num_Lock,    numlock,        {.i =  0} },
-	{ ShiftMask,            XK_Page_Up,     kscrollup,      {.i = -1} },
-	{ ShiftMask,            XK_Page_Down,   kscrolldown,    {.i = -1} },
 };
 
 /*
