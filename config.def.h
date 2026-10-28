@@ -189,7 +189,6 @@ static MouseShortcut mshortcuts[] = {
 	{ XK_ANY_MOD,           Button4, kscrollup,      {.i = 3},      0 },
 	{ XK_ANY_MOD,           Button5, kscrolldown,    {.i = 3},      0 },
 };
-
 /* Internal keyboard shortcuts. */
 #define MODKEY Mod1Mask
 #define TERMMOD (ControlMask|ShiftMask)
