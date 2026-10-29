@@ -115,26 +115,27 @@ typedef struct {
 
 /* Internal representation of the screen */
 typedef struct {
-	int row;      /* nb row */
-	int col;      /* nb col */
-	Line *line;   /* screen */
-	Line *alt;    /* alternate screen */
-	Line hist[HISTSIZE]; /* history buffer */
-	int histi;    /* history index */
-	int scr;      /* scroll back */
-	int *dirty;   /* dirtyness of lines */
-	TCursor c;    /* cursor */
-	int ocx;      /* old cursor col */
-	int ocy;      /* old cursor row */
-	int top;      /* top    scroll limit */
-	int bot;      /* bottom scroll limit */
-	int mode;     /* terminal mode flags */
-	int esc;      /* escape state flags */
-	char trantbl[4]; /* charset table translation */
-	int charset;  /* current charset */
-	int icharset; /* selected charset for sequence */
+	int row;      		/* nb row */
+	int col;      		/* nb col */
+	Line *line;   		/* screen */
+	Line *alt;    		/* alternate screen */
+	Line hist[HISTSIZE]; 	/* history buffer */
+	int histi;    		/* history index */
+	int histn;    		/* number of valid history lines */
+	int scr;      		/* scroll back */
+	int *dirty;   		/* dirtyness of lines */
+	TCursor c;    		/* cursor */
+	int ocx;      		/* old cursor col */
+	int ocy;      		/* old cursor row */
+	int top;      		/* top    scroll limit */
+	int bot;      		/* bottom scroll limit */
+	int mode;     		/* terminal mode flags */
+	int esc;      		/* escape state flags */
+	char trantbl[4]; 	/* charset table translation */
+	int charset;  		/* current charset */
+	int icharset; 		/* selected charset for sequence */
 	int *tabs;
-	Rune lastc;   /* last printed char outside of sequence, 0 if control */
+	Rune lastc;   		/* last printed char outside of sequence, 0 if control */
 } Term;
 
 /* CSI Escape sequence structs */
@@ -1131,13 +1132,19 @@ kscrolldown(const Arg* a)
 {
 	int n = a->i;
 
+	if (IS_SET(MODE_ALTSCREEN)) {
+		/* no scrollback on alt screen: wheel acts like ^E */
+		for (; n > 0; n--)
+			ttywrite("\005", 1, 1);
+		return;
+	}
 	if (n < 0)
 		n = term.row + n;
 
 	if (n > term.scr)
 		n = term.scr;
 
-	if (term.scr > 0) {
+	if (n > 0) {
 		term.scr -= n;
 		selscroll(0, -n);
 		tfulldirt();
@@ -1149,10 +1156,16 @@ kscrollup(const Arg* a)
 {
 	int n = a->i;
 
+	if (IS_SET(MODE_ALTSCREEN)) {
+		for (; n > 0; n--)
+			ttywrite("\031", 1, 1);   /* ^Y */
+		return;
+	}
 	if (n < 0)
 		n = term.row + n;
 
-	if (term.scr <= HISTSIZE-n) {
+	n = MIN(n, term.histn - term.scr);   /* never past real history */
+	if (n > 0) {
 		term.scr += n;
 		selscroll(0, n);
 		tfulldirt();
@@ -1195,15 +1208,16 @@ tscrollup(int orig, int n, int copyhist)
 
 	LIMIT(n, 0, term.bot-orig+1);
 
-	if (copyhist) {
+	if (copyhist && orig == 0 && !IS_SET(MODE_ALTSCREEN)) {
 		term.histi = (term.histi + 1) % HISTSIZE;
 		temp = term.hist[term.histi];
 		term.hist[term.histi] = term.line[orig];
 		term.line[orig] = temp;
+		term.histn = MIN(term.histn + 1, HISTSIZE);
 	}
 
-	if (term.scr > 0 && term.scr < HISTSIZE)
-		term.scr = MIN(term.scr + n, HISTSIZE-1);
+	if (term.scr > 0)
+		term.scr = MIN(term.scr + n, term.histn);
 
 	tclearregion(0, orig, term.col-1, orig+n-1);
 	tsetdirt(orig+n, term.bot);
@@ -1684,7 +1698,10 @@ tsetmode(int priv, int set, const int *args, int narg)
 							term.row-1);
 				}
 				if (set ^ alt) /* set is always 1 or 0 */
+				{
+					term.scr = 0;
 					tswapscreen();
+				}
 				if (*args != 1049)
 					break;
 				/* FALLTHROUGH */
