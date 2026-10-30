@@ -31,3 +31,20 @@ See the man page for additional details.
 Credits
 -------
 Based on Aurélien APTEL <aurelien dot aptel at gmail dot com> bt source code.
+
+My personal fork of [st](https://st.suckless.org/), the simple terminal for X11.
+
+Based on the suckless `st` and kept for **my own use**.  
+Everything not listed below is upstream code; the notes here are mine.
+
+## Personal use
+
+This repo is for **my own setup**.  
+It is not a general-purpose project, and I don’t guarantee it will work on your machine.  
+Feel free to read/copy it, but expect to edit the source (especially `config.h`) for your own system.
+
+## What’s different
+
+- Personal fork of upstream st.
+- `config.h` may be tweaked for my setup (fonts, colors, patches).
+- See the [commit history](https://github.com/kafudz/st/commits/master) for exact changes 
