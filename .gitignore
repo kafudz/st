@@ -5,3 +5,5 @@ st.c~
 .gitignore~
 st.c~
 st.c.orig
+st.o
+x.o
