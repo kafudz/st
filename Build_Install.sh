@@ -1,11 +1,17 @@
-# Save all 7 files into one directory: arg.h config.h config.mk st.c st.h win.h x.c
+#!/usr/bin/env bash
+set -e
 
-# On Debian/Ubuntu install deps:
-sudo apt install build-essential libx11-dev libxft-dev libfontconfig1-dev
+echo "==> Installing dependencies (Debian/Ubuntu)..."
+sudo apt update
+sudo apt install -y build-essential libx11-dev libxft-dev libfontconfig1-dev
 
-# Build
+echo "==> Cleaning previous builds..."
 make clean
+
+echo "==> Building st with optimizations..."
 make
 
-# Install
+echo "==> Installing st to /usr/local..."
 sudo make install
+
+echo "==> Build and installation complete!"
