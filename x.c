@@ -572,6 +572,7 @@ selnotify(XEvent *e)
 			 * Deleting the property is the transfer start signal.
 			 */
 			XDeleteProperty(xw.dpy, xw.win, (int)property);
+			XFree(data);
 			continue;
 		}
 
@@ -659,7 +660,9 @@ selrequest(XEvent *e)
 			fprintf(stderr,
 				"Unhandled clipboard selection 0x%lx\n",
 				xsre->selection);
-			return;
+			/* seltext stays NULL: fall through and reject, so the
+			 * requestor gets a SelectionNotify instead of hanging */
+			seltext = NULL;
 		}
 		if (seltext != NULL) {
 			XChangeProperty(xsre->display, xsre->requestor,
