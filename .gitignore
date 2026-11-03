@@ -1,9 +1,11 @@
-.st.c.un~
-st.c~
-..gitignore.un~
-.gitignore.swp
-.gitignore~
-st.c~
-st.c.orig
-st.o
-x.o
+# build output
+/st
+*.o
+st-*.tar.gz
+
+# editor and patch leftovers
+*~
+*.swp
+*.un~
+*.orig
+*.rej

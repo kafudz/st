@@ -68,6 +68,12 @@ static unsigned int blinktimeout = 800;
 static unsigned int cursorthickness = 2;
 
 /*
+ * cursor blink interval in ms for the blinking cursor styles (DECSCUSR 0, 1,
+ * 3, 5, 7); set to 0 to disable cursor blinking
+ */
+static unsigned int cursorblinktimeout = 500;
+
+/*
  * bell volume. It must be a value between -100 and 100. Use 0 for disabling
  * it
  */
@@ -143,6 +149,9 @@ static unsigned int defaultrcs = 257;
  */
 static unsigned int cursorshape = 2;
 
+/* Glyph drawn by the snowman cursor styles (7 and 8) */
+static Rune stcursor = 0x2603; /* snowman ("☃") */
+
 /*
  * Default columns and rows numbers
  */
@@ -178,9 +187,9 @@ static MouseShortcut mshortcuts[] = {
 	/* mask                 button   function        argument       release */
 	{ XK_ANY_MOD,           Button2, selpaste,       {.i = 0},      1 },
 	{ ShiftMask,            Button4, ttysend,        {.s = "\033[5;2~"} },
-	{ XK_ANY_MOD,           Button4, ttysend,        {.s = "\031"} },
+	{ XK_ANY_MOD,           Button4, kscrollup,      {.i = 3},      0 },
 	{ ShiftMask,            Button5, ttysend,        {.s = "\033[6;2~"} },
-	{ XK_ANY_MOD,           Button5, ttysend,        {.s = "\005"} },
+	{ XK_ANY_MOD,           Button5, kscrolldown,    {.i = 3},      0 },
 };
 
 /* Internal keyboard shortcuts. */
@@ -201,6 +210,8 @@ static Shortcut shortcuts[] = {
 	{ TERMMOD,              XK_Y,           selpaste,       {.i =  0} },
 	{ ShiftMask,            XK_Insert,      selpaste,       {.i =  0} },
 	{ TERMMOD,              XK_Num_Lock,    numlock,        {.i =  0} },
+	{ ShiftMask,            XK_Page_Up,     kscrollup,      {.i = -1} },
+	{ ShiftMask,            XK_Page_Down,   kscrolldown,    {.i = -1} },
 };
 
 /*

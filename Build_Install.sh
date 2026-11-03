@@ -3,7 +3,7 @@ set -e
 
 echo "==> Installing dependencies (Debian/Ubuntu)..."
 sudo apt update
-sudo apt install -y build-essential libx11-dev libxft-dev libfontconfig1-dev
+sudo apt install -y build-essential pkg-config libx11-dev libxft-dev libfontconfig1-dev libfreetype-dev
 
 echo "==> Cleaning previous builds..."
 make clean
