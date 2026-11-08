@@ -558,6 +558,13 @@ selnotify(XEvent *e)
 					&xw.attrs);
 		}
 
+		/*
+		 * Xlib returns a NULL data pointer for an empty property.
+		 * Don't do pointer arithmetic on it below.
+		 */
+		if (data == NULL)
+			break;
+
 		if (type == incratom) {
 			/*
 			 * Activate the PropertyNotify events so we receive
@@ -571,6 +578,7 @@ selnotify(XEvent *e)
 			/*
 			 * Deleting the property is the transfer start signal.
 			 */
+			XFree(data);
 			XDeleteProperty(xw.dpy, xw.win, (int)property);
 			continue;
 		}
@@ -1064,10 +1072,16 @@ xloadfonts(const char *fontstr, double fontsize)
 void
 xunloadfont(Font *f)
 {
-	XftFontClose(xw.dpy, f->match);
-	FcPatternDestroy(f->pattern);
+	if (f->match)
+		XftFontClose(xw.dpy, f->match);
+	if (f->pattern)
+		FcPatternDestroy(f->pattern);
 	if (f->set)
 		FcFontSetDestroy(f->set);
+
+	f->match = NULL;
+	f->pattern = NULL;
+	f->set = NULL;
 }
 
 void
@@ -1097,6 +1111,10 @@ ximopen(Display *dpy)
 		fprintf(stderr, "XSetIMValues: "
 		                "Could not set XNDestroyCallback.\n");
 
+	if (xw.ime.spotlist) {
+		XFree(xw.ime.spotlist);
+		xw.ime.spotlist = NULL;
+	}
 	xw.ime.spotlist = XVaCreateNestedList(0, XNSpotLocation, &xw.ime.spot,
 	                                      NULL);
 
@@ -1127,7 +1145,10 @@ ximdestroy(XIM xim, XPointer client, XPointer call)
 	xw.ime.xim = NULL;
 	XRegisterIMInstantiateCallback(xw.dpy, NULL, NULL, NULL,
 	                               ximinstantiate, NULL);
-	XFree(xw.ime.spotlist);
+	if (xw.ime.spotlist) {
+		XFree(xw.ime.spotlist);
+		xw.ime.spotlist = NULL;
+	}
 }
 
 int
@@ -1327,6 +1348,11 @@ xmakeglyphfontspecs(XftGlyphFontSpec *specs, const Glyph *glyphs, int len, int x
 			if (!font->set)
 				font->set = FcFontSort(0, font->pattern,
 				                       1, 0, &fcres);
+			if (!font->set) {
+				/* No fallback available; leave a blank cell. */
+				xp += runewidth;
+				continue;
+			}
 			fcsets[0] = font->set;
 
 			/*
@@ -1338,6 +1364,14 @@ xmakeglyphfontspecs(XftGlyphFontSpec *specs, const Glyph *glyphs, int len, int x
 			 */
 			fcpattern = FcPatternDuplicate(font->pattern);
 			fccharset = FcCharSetCreate();
+			if (!fcpattern || !fccharset) {
+				if (fcpattern)
+					FcPatternDestroy(fcpattern);
+				if (fccharset)
+					FcCharSetDestroy(fccharset);
+				xp += runewidth;
+				continue;
+			}
 
 			FcCharSetAddChar(fccharset, rune);
 			FcPatternAddCharSet(fcpattern, FC_CHARSET,
@@ -1350,6 +1384,12 @@ xmakeglyphfontspecs(XftGlyphFontSpec *specs, const Glyph *glyphs, int len, int x
 
 			fontpattern = FcFontSetMatch(0, fcsets, 1,
 					fcpattern, &fcres);
+			if (!fontpattern) {
+				FcPatternDestroy(fcpattern);
+				FcCharSetDestroy(fccharset);
+				xp += runewidth;
+				continue;
+			}
 
 			/* Allocate memory for the new cache entry. */
 			if (frclen >= frccap) {
@@ -1391,9 +1431,12 @@ xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, i
 	int charlen = len * ((base.mode & ATTR_WIDE) ? 2 : 1);
 	int winx = win.hborderpx + x * win.cw, winy = win.vborderpx + y * win.ch,
 	    width = charlen * win.cw;
-	Color *fg, *bg, *temp, revfg, revbg, truefg, truebg;
+	Color *fg, *bg, *temp, revfg, revbg, truefg, truebg, faintfg;
 	XRenderColor colfg, colbg;
 	XRectangle r;
+	int freefg, freebg, freerevfg, freerevbg, freefaintfg;
+
+	freefg = freebg = freerevfg = freerevbg = freefaintfg = 0;
 
 	/* Fallback on color display for attributes not supported by the font */
 	if (base.mode & ATTR_ITALIC && base.mode & ATTR_BOLD) {
@@ -1409,8 +1452,12 @@ xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, i
 		colfg.red = TRUERED(base.fg);
 		colfg.green = TRUEGREEN(base.fg);
 		colfg.blue = TRUEBLUE(base.fg);
-		XftColorAllocValue(xw.dpy, xw.vis, xw.cmap, &colfg, &truefg);
-		fg = &truefg;
+		if (XftColorAllocValue(xw.dpy, xw.vis, xw.cmap, &colfg, &truefg)) {
+			fg = &truefg;
+			freefg = 1;
+		} else {
+			fg = &dc.col[defaultfg];
+		}
 	} else {
 		fg = &dc.col[base.fg];
 	}
@@ -1420,8 +1467,12 @@ xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, i
 		colbg.green = TRUEGREEN(base.bg);
 		colbg.red = TRUERED(base.bg);
 		colbg.blue = TRUEBLUE(base.bg);
-		XftColorAllocValue(xw.dpy, xw.vis, xw.cmap, &colbg, &truebg);
-		bg = &truebg;
+		if (XftColorAllocValue(xw.dpy, xw.vis, xw.cmap, &colbg, &truebg)) {
+			bg = &truebg;
+			freebg = 1;
+		} else {
+			bg = &dc.col[defaultbg];
+		}
 	} else {
 		bg = &dc.col[base.bg];
 	}
@@ -1438,9 +1489,11 @@ xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, i
 			colfg.green = ~fg->color.green;
 			colfg.blue = ~fg->color.blue;
 			colfg.alpha = fg->color.alpha;
-			XftColorAllocValue(xw.dpy, xw.vis, xw.cmap, &colfg,
-					&revfg);
-			fg = &revfg;
+			if (XftColorAllocValue(xw.dpy, xw.vis, xw.cmap,
+					&colfg, &revfg)) {
+				fg = &revfg;
+				freerevfg = 1;
+			}
 		}
 
 		if (bg == &dc.col[defaultbg]) {
@@ -1450,9 +1503,11 @@ xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, i
 			colbg.green = ~bg->color.green;
 			colbg.blue = ~bg->color.blue;
 			colbg.alpha = bg->color.alpha;
-			XftColorAllocValue(xw.dpy, xw.vis, xw.cmap, &colbg,
-					&revbg);
-			bg = &revbg;
+			if (XftColorAllocValue(xw.dpy, xw.vis, xw.cmap,
+					&colbg, &revbg)) {
+				bg = &revbg;
+				freerevbg = 1;
+			}
 		}
 	}
 
@@ -1461,8 +1516,11 @@ xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, i
 		colfg.green = fg->color.green / 2;
 		colfg.blue = fg->color.blue / 2;
 		colfg.alpha = fg->color.alpha;
-		XftColorAllocValue(xw.dpy, xw.vis, xw.cmap, &colfg, &revfg);
-		fg = &revfg;
+		if (XftColorAllocValue(xw.dpy, xw.vis, xw.cmap,
+				&colfg, &faintfg)) {
+			fg = &faintfg;
+			freefaintfg = 1;
+		}
 	}
 
 	if (base.mode & ATTR_REVERSE) {
@@ -1518,6 +1576,18 @@ xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, i
 
 	/* Reset clip to none. */
 	XftDrawSetClip(xw.draw, 0);
+
+	/* Release temporary colors (matters on non-TrueColor visuals). */
+	if (freefg)
+		XftColorFree(xw.dpy, xw.vis, xw.cmap, &truefg);
+	if (freebg)
+		XftColorFree(xw.dpy, xw.vis, xw.cmap, &truebg);
+	if (freerevfg)
+		XftColorFree(xw.dpy, xw.vis, xw.cmap, &revfg);
+	if (freerevbg)
+		XftColorFree(xw.dpy, xw.vis, xw.cmap, &revbg);
+	if (freefaintfg)
+		XftColorFree(xw.dpy, xw.vis, xw.cmap, &faintfg);
 }
 
 void

@@ -195,6 +195,7 @@ static void tputc(Rune);
 static void treset(void);
 static void tscrollup(int, int, int);
 static void tscrolldown(int, int);
+static void scrollbottom(void);
 static void tsetattr(const int *, int);
 static void tsetchar(Rune, const Glyph *, int, int);
 static void tsetdirt(int, int);
@@ -617,17 +618,18 @@ getsel(void)
 			lastx = (sel.ne.y == y) ? sel.ne.x : term.col-1;
 		}
 		last = &TLINE(y)[MIN(lastx, linelen-1)];
-		while (last >= gp && last->u == ' ')
+		while (last > gp && last->u == ' ')
 			--last;
-		/* only blanks selected: last is now before gp, don't dereference it */
-		blank = last < gp;
+		/* only blanks selected: don't move before gp or dereference it */
+		blank = last == gp && last->u == ' ';
 
-		for ( ; gp <= last; ++gp) {
-			if (gp->mode & ATTR_WDUMMY)
-				continue;
+		if (!blank)
+			for ( ; gp <= last; ++gp) {
+				if (gp->mode & ATTR_WDUMMY)
+					continue;
 
-			ptr += utf8encode(gp->u, ptr);
-		}
+				ptr += utf8encode(gp->u, ptr);
+			}
 
 		/*
 		 * Copy and pasting of line endings is inconsistent
@@ -856,13 +858,30 @@ ttyread(void)
 	}
 }
 
+/*
+ * Leave scrollback and show the live screen again.  This is deliberately
+ * not implemented with kscrolldown(): kscrolldown() may call ttywrite()
+ * on the alternate screen, and ttywrite() must never call back into it.
+ */
+static void
+scrollbottom(void)
+{
+	int n = term.scr;
+
+	if (n <= 0)
+		return;
+
+	term.scr = 0;
+	selscroll(0, -n);
+	tfulldirt();
+}
+
 void
 ttywrite(const char *s, size_t n, int may_echo)
 {
 	const char *next;
-	Arg arg = (Arg) { .i = term.scr };
 
-	kscrolldown(&arg);
+	scrollbottom();
 
 	if (may_echo && IS_SET(MODE_ECHO))
 		twrite(s, n, 1);
@@ -1087,6 +1106,10 @@ void
 treset(void)
 {
 	uint i;
+
+	/* RIS must return to the live screen and a visible cursor */
+	term.scr = 0;
+	cblinkoff = 0;
 
 	term.c = (TCursor){{
 		.mode = ATTR_NULL,
@@ -2799,6 +2822,8 @@ tresize(int col, int row)
 	/* update terminal size */
 	term.col = col;
 	term.row = row;
+	/* keep the scrollback offset valid after a resize */
+	LIMIT(term.scr, 0, term.histn);
 	/* reset scrolling region */
 	tsetscroll(0, row-1);
 	/* make use of the LIMIT in tmoveto */
