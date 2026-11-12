@@ -108,7 +108,7 @@ static const char *colorname[] = {
 	"#cccccc",   /* 256: defaultcs  (cursor)           */
 	"#555555",   /* 257: defaultrcs (reverse cursor)   */
 	"gray90",    /* 258: defaultfg (foreground)        */
-	"#161616",   /* 259: defaultbg (background)        */
+	"#101113",   /* 259: defaultbg (background)        */
 };
 
 /*
