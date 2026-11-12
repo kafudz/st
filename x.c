@@ -255,6 +255,12 @@ static char *opt_title = NULL;
 
 static uint buttons; /* bit field of pressed buttons */
 
+/* Selection autoscroll while dragging past the top/bottom edge. */
+#define SELSCROLL_INTERVAL 50 /* ms */
+static int selautodir;    /* -1 up, +1 down, 0 inactive */
+static int selautocol;    /* column under the pointer while autoscrolling */
+static struct timespec selautolast;
+
 void
 clipcopy(const Arg *dummy)
 {
@@ -343,6 +349,15 @@ evrow(XEvent *e)
 	int y = e->xbutton.y - win.vborderpx;
 	LIMIT(y, 0, win.th - 1);
 	return y / win.ch;
+}
+
+static void
+selautoscrolltick(void)
+{
+	if (!selautodir || !(buttons & 1))
+		return;
+	if (!selautoscroll(selautodir, selautocol))
+		selautodir = 0;
 }
 
 void
@@ -500,6 +515,7 @@ bpress(XEvent *e)
 		xsel.tclick2 = xsel.tclick1;
 		xsel.tclick1 = now;
 
+		selautodir = 0;
 		selstart(evcol(e), evrow(e), snap);
 	}
 }
@@ -718,19 +734,43 @@ brelease(XEvent *e)
 
 	if (mouseaction(e, 1))
 		return;
-	if (btn == Button1)
+	if (btn == Button1) {
+		selautodir = 0;
 		mousesel(e, 1);
+	}
 }
 
 void
 bmotion(XEvent *e)
 {
+	int dir = 0;
+
 	if (IS_SET(MODE_MOUSE) && !(e->xbutton.state & forcemousemod)) {
+		selautodir = 0;
 		mousereport(e);
 		return;
 	}
 
+	if (e->xbutton.state & Button1Mask) {
+		if (e->xbutton.y < win.vborderpx)
+			dir = -1;
+		else if (e->xbutton.y >= win.vborderpx + win.th)
+			dir = 1;
+	}
+
 	mousesel(e, 0);
+
+	if (dir) {
+		selautocol = evcol(e);
+		if (selautoscroll(dir, selautocol)) {
+			selautodir = dir;
+			clock_gettime(CLOCK_MONOTONIC, &selautolast);
+		} else {
+			selautodir = 0;
+		}
+	} else {
+		selautodir = 0;
+	}
 }
 
 void
@@ -2123,6 +2163,17 @@ run(void)
 				timeout = ct;
 		} else {
 			tcursorblinkreset();
+		}
+
+		if (selautodir) {
+			double st = SELSCROLL_INTERVAL - TIMEDIFF(now, selautolast);
+			if (st <= 0) {
+				selautoscrolltick();
+				selautolast = now;
+				st = SELSCROLL_INTERVAL;
+			}
+			if (selautodir && (timeout < 0 || st < timeout))
+				timeout = st;
 		}
 
 		draw();

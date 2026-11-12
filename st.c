@@ -44,7 +44,7 @@
 #define ISCONTROL(c)		(ISCONTROLC0(c) || ISCONTROLC1(c))
 #define ISDELIM(u)		(u && wcschr(worddelimiters, u))
 #define TLINE(y)		((y) < term.scr ? term.hist[((y) + term.histi - \
-				term.scr + HISTSIZE + 1) % HISTSIZE] : \
+				term.scr + 2*HISTSIZE + 1) % HISTSIZE] : \
 				term.line[(y) - term.scr])
 
 enum term_mode {
@@ -111,6 +111,7 @@ typedef struct {
 	} nb, ne, ob, oe;
 
 	int alt;
+	int drag;	/* selection is being extended by a mouse drag */
 } Selection;
 
 /* Internal representation of the screen */
@@ -214,7 +215,7 @@ static void tstrsequence(uchar);
 static void drawregion(int, int, int, int);
 
 static void selnormalize(void);
-static void selscroll(int, int);
+static void selscroll(int, int, int);
 static void selsnap(int *, int *, int);
 
 static size_t utf8decode(const char *, Rune *, size_t);
@@ -410,6 +411,7 @@ selinit(void)
 {
 	sel.mode = SEL_IDLE;
 	sel.snap = 0;
+	sel.drag = 0;
 	sel.ob.x = -1;
 }
 
@@ -435,6 +437,7 @@ selstart(int col, int row, int snap)
 	sel.type = SEL_REGULAR;
 	sel.alt = IS_SET(MODE_ALTSCREEN);
 	sel.snap = snap;
+	sel.drag = 1;
 	sel.oe.x = sel.ob.x = col;
 	sel.oe.y = sel.ob.y = row;
 	selnormalize();
@@ -471,6 +474,8 @@ selextend(int col, int row, int type, int done)
 		tsetdirt(MIN(sel.nb.y, oldsby), MAX(sel.ne.y, oldsey));
 
 	sel.mode = done ? SEL_IDLE : SEL_READY;
+	if (done)
+		sel.drag = 0;
 }
 
 void
@@ -655,6 +660,7 @@ selclear(void)
 	if (sel.ob.x == -1)
 		return;
 	sel.mode = SEL_IDLE;
+	sel.drag = 0;
 	sel.ob.x = -1;
 	tsetdirt(sel.nb.y, sel.ne.y);
 }
@@ -872,7 +878,7 @@ scrollbottom(void)
 		return;
 
 	term.scr = 0;
-	selscroll(0, -n);
+	selscroll(0, -n, 1);
 	tfulldirt();
 }
 
@@ -1172,7 +1178,7 @@ kscrolldown(const Arg* a)
 
 	if (n > 0) {
 		term.scr -= n;
-		selscroll(0, -n);
+		selscroll(0, -n, 1);
 		tfulldirt();
 	}
 }
@@ -1193,7 +1199,7 @@ kscrollup(const Arg* a)
 	n = MIN(n, term.histn - term.scr);   /* never past real history */
 	if (n > 0) {
 		term.scr += n;
-		selscroll(0, n);
+		selscroll(0, n, 1);
 		tfulldirt();
 	}
 }
@@ -1216,7 +1222,7 @@ tscrolldown(int orig, int n)
 	}
 
 	if (term.scr == 0)
-		selscroll(orig, n);
+		selscroll(orig, n, 0);
 }
 
 void
@@ -1248,14 +1254,34 @@ tscrollup(int orig, int n, int copyhist)
 	}
 
 	if (term.scr == 0)
-		selscroll(orig, -n);
+		selscroll(orig, -n, 0);
 }
 
 void
-selscroll(int orig, int n)
+selscroll(int orig, int n, int view)
 {
 	if (sel.ob.x == -1 || sel.alt != IS_SET(MODE_ALTSCREEN))
 		return;
+
+	/*
+	 * While a mouse drag is extending the selection, keep it anchored to
+	 * the text even if it leaves the viewport: dragging past an edge must
+	 * be able to select into the scrollback.  Drop it only when the text
+	 * it refers to is no longer in the history buffer.
+	 */
+	if (sel.drag && view && !IS_SET(MODE_ALTSCREEN)) {
+		sel.ob.y += n;
+		sel.oe.y += n;
+		if (sel.ob.y < term.scr - term.histn ||
+		    sel.ob.y > term.scr + term.row - 1 ||
+		    sel.oe.y < term.scr - term.histn ||
+		    sel.oe.y > term.scr + term.row - 1) {
+			selclear();
+		} else {
+			selnormalize();
+		}
+		return;
+	}
 
 	if (BETWEEN(sel.nb.y, orig, term.bot) != BETWEEN(sel.ne.y, orig, term.bot)) {
 		selclear();
@@ -1269,6 +1295,34 @@ selscroll(int orig, int n)
 			selnormalize();
 		}
 	}
+}
+
+/*
+ * Scroll the view one line in direction dir (-1 up, +1 down) and extend the
+ * selection to the corresponding edge of the viewport.  Returns non-zero if
+ * the view actually moved.
+ */
+int
+selautoscroll(int dir, int col)
+{
+	Arg a = { .i = 1 };
+	int scr = term.scr;
+
+	if (dir == 0 || sel.mode == SEL_IDLE || sel.ob.x == -1 ||
+	    sel.alt != IS_SET(MODE_ALTSCREEN) || IS_SET(MODE_ALTSCREEN))
+		return 0;
+
+	if (dir < 0)
+		kscrollup(&a);
+	else
+		kscrolldown(&a);
+
+	if (term.scr == scr)
+		return 0;
+
+	LIMIT(col, 0, term.col - 1);
+	selextend(col, dir < 0 ? 0 : term.row - 1, sel.type, 0);
+	return 1;
 }
 
 void

@@ -111,6 +111,7 @@ void selinit(void);
 void selstart(int, int, int);
 void selextend(int, int, int, int);
 int selected(int, int);
+int selautoscroll(int, int);
 char *getsel(void);
 
 size_t utf8encode(Rune, char *);

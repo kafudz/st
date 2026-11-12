@@ -47,4 +47,5 @@ Feel free to read/copy it, but expect to edit the source (especially `config.h`)
 
 - Personal fork of upstream st.
 - `config.h` may be tweaked for my setup (fonts, colors, patches).
+- Dragging a selection past the top or bottom edge auto-scrolls the scrollback, so text outside the visible screen can be selected and copied.
 - See the [commit history](https://github.com/kafudz/st/commits/master) for exact changes 
