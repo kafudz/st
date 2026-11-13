@@ -36,6 +36,8 @@
 #define STR_BUF_SIZ   ESC_BUF_SIZ
 #define STR_ARG_SIZ   ESC_ARG_SIZ
 #define HISTSIZE      2000
+/* hard cap for a single OSC/DCS/APC/PM string (untrusted app output) */
+#define STR_BUF_MAX   (16 * 1024 * 1024)
 
 /* macros */
 #define IS_SET(flag)		((term.mode & (flag)) != 0)
@@ -599,13 +601,15 @@ char *
 getsel(void)
 {
 	char *str, *ptr;
-	int y, bufsize, lastx, linelen, blank;
+	int y, lastx, linelen, blank;
+	size_t bufsize;
 	const Glyph *gp, *last;
 
 	if (sel.ob.x == -1)
 		return NULL;
 
-	bufsize = (term.col+1) * (sel.ne.y-sel.nb.y+1) * UTF_SIZ;
+	bufsize = (size_t)(term.col + 1) *
+	          (size_t)(sel.ne.y - sel.nb.y + 1) * UTF_SIZ;
 	ptr = str = xmalloc(bufsize);
 
 	/* append every set & selected glyph to the selection */
@@ -1114,7 +1118,7 @@ treset(void)
 	uint i;
 
 	/* RIS must return to the live screen and a visible cursor */
-	term.scr = 0;
+	scrollbottom();
 	cblinkoff = 0;
 
 	term.c = (TCursor){{
@@ -1229,6 +1233,7 @@ void
 tscrollup(int orig, int n, int copyhist)
 {
 	int i;
+	int copied = 0;
 	Line temp;
 
 	LIMIT(n, 0, term.bot-orig+1);
@@ -1239,10 +1244,56 @@ tscrollup(int orig, int n, int copyhist)
 		term.hist[term.histi] = term.line[orig];
 		term.line[orig] = temp;
 		term.histn = MIN(term.histn + 1, HISTSIZE);
+		copied = 1;
 	}
 
-	if (term.scr > 0)
+	if (term.scr > 0) {
+		int oldscr = term.scr;
+		int dscr;
+
 		term.scr = MIN(term.scr + n, term.histn);
+		dscr = term.scr - oldscr;
+		/*
+		 * Keep a selection anchored to its text.
+		 *
+		 * History rows follow the viewport: TLINE() maps them through
+		 * histi - scr, so scr advancing by dscr (and a copied line
+		 * advancing histi by one) requires the matching shift.
+		 * Live rows follow the screen scroll instead; the two effects
+		 * cancel while the viewport can still move, and leave only the
+		 * screen scroll once it is clamped at the oldest line.
+		 */
+		if (sel.ob.x != -1 && sel.alt == IS_SET(MODE_ALTSCREEN)) {
+			if (sel.ob.y < oldscr && sel.oe.y < oldscr) {
+				int dy = dscr - (copied ? 1 : 0);
+				sel.ob.y += dy;
+				sel.oe.y += dy;
+				sel.nb.y += dy;
+				sel.ne.y += dy;
+			} else if (sel.ob.y >= oldscr && sel.oe.y >= oldscr) {
+				int dy = dscr - n;
+				sel.ob.y += dy;
+				sel.oe.y += dy;
+				sel.nb.y += dy;
+				sel.ne.y += dy;
+			} else {
+				/* straddles the boundary; no uniform shift */
+				selclear();
+			}
+		}
+		/*
+		 * Rows that dropped out of the history ring are no longer
+		 * addressable; drop the selection instead of silently
+		 * referring to recycled lines.
+		 */
+		if (sel.ob.x != -1 &&
+		    sel.alt == IS_SET(MODE_ALTSCREEN) &&
+		    (sel.nb.y < term.scr - term.histn ||
+		     sel.ob.y < term.scr - term.histn ||
+		     sel.ne.y > term.scr + term.row - 1 ||
+		     sel.oe.y > term.scr + term.row - 1))
+			selclear();
+	}
 
 	tclearregion(0, orig, term.col-1, orig+n-1);
 	tsetdirt(orig+n, term.bot);
@@ -1264,12 +1315,13 @@ selscroll(int orig, int n, int view)
 		return;
 
 	/*
-	 * While a mouse drag is extending the selection, keep it anchored to
-	 * the text even if it leaves the viewport: dragging past an edge must
-	 * be able to select into the scrollback.  Drop it only when the text
-	 * it refers to is no longer in the history buffer.
+	 * The viewport itself moved by n lines (the text did not): keep the
+	 * selection anchored to its text.  This applies to a finished
+	 * selection too, otherwise scrolling back would leave the highlight
+	 * and a later copy pointing at unrelated lines.  Drop it only when
+	 * the text it refers to is no longer in the history buffer.
 	 */
-	if (sel.drag && view && !IS_SET(MODE_ALTSCREEN)) {
+	if (view && !IS_SET(MODE_ALTSCREEN)) {
 		sel.ob.y += n;
 		sel.oe.y += n;
 		if (sel.ob.y < term.scr - term.histn ||
@@ -1516,6 +1568,11 @@ tdefcolor(const int *attr, int *npar, int l)
 {
 	int32_t idx = -1;
 	uint r, g, b;
+
+	/* attr[*npar + 1] is the color space selector: make sure the caller
+	 * did not hand us a full ESC_ARG_SIZ list with 38/48/58 as last arg. */
+	if (*npar + 1 >= ESC_ARG_SIZ)
+		return -1;
 
 	switch (attr[*npar + 1]) {
 	case 2: /* direct color in RGB space */
@@ -1772,7 +1829,9 @@ tsetmode(int priv, int set, const int *args, int narg)
 				}
 				if (set ^ alt) /* set is always 1 or 0 */
 				{
-					term.scr = 0;
+					/* rebase any live selection before
+					 * leaving scrollback for the alt screen */
+					scrollbottom();
 					tswapscreen();
 				}
 				if (*args != 1049)
@@ -2208,7 +2267,8 @@ strhandle(void)
 		}
 		break;
 	case 'k': /* old title set compatibility */
-		xsettitle(strescseq.args[0]);
+		if (strescseq.narg > 0)
+			xsettitle(strescseq.args[0]);
 		return;
 	case 'P': /* DCS -- Device Control String */
 	case '_': /* APC -- Application Program Command */
@@ -2381,7 +2441,8 @@ tdeftran(char ascii)
 	static int vcs[] = {CS_GRAPHIC0, CS_USA};
 	char *p;
 
-	if ((p = strchr(cs, ascii)) == NULL) {
+	/* strchr() also matches the terminating NUL, which is not in vcs[] */
+	if (ascii == '\0' || (p = strchr(cs, ascii)) == NULL) {
 		fprintf(stderr, "esc unhandled charset: ESC ( %c\n", ascii);
 	} else {
 		term.trantbl[term.icharset] = vcs[p - cs];
@@ -2661,6 +2722,17 @@ tputc(Rune u)
 			 */
 			if (strescseq.siz > (SIZE_MAX - UTF_SIZ) / 2)
 				return;
+			/*
+			 * Application output is untrusted: a string sequence
+			 * that is never terminated must not grow until the
+			 * whole terminal is killed by the OOM killer.  Drop
+			 * oversized sequences instead.
+			 */
+			if (strescseq.siz >= STR_BUF_MAX) {
+				term.esc &= ~(ESC_START|ESC_STR);
+				strreset();
+				return;
+			}
 			strescseq.siz *= 2;
 			strescseq.buf = xrealloc(strescseq.buf, strescseq.siz);
 		}
@@ -2832,12 +2904,14 @@ tresize(int col, int row)
 	term.dirty = xrealloc(term.dirty, row * sizeof(*term.dirty));
 	term.tabs = xrealloc(term.tabs, col * sizeof(*term.tabs));
 
-	for (i = 0; i < HISTSIZE; i++) {
-		term.hist[i] = xrealloc(term.hist[i], col * sizeof(Glyph));
-		for (j = mincol; j < col; j++) {
-			term.hist[i][j] = term.c.attr;
-			term.hist[i][j].mode = 0;
-			term.hist[i][j].u = ' ';
+	if (col != term.col) {
+		for (i = 0; i < HISTSIZE; i++) {
+			term.hist[i] = xrealloc(term.hist[i], col * sizeof(Glyph));
+			for (j = mincol; j < col; j++) {
+				term.hist[i][j] = term.c.attr;
+				term.hist[i][j].mode = 0;
+				term.hist[i][j].u = ' ';
+			}
 		}
 	}
 
@@ -2878,6 +2952,22 @@ tresize(int col, int row)
 	term.row = row;
 	/* keep the scrollback offset valid after a resize */
 	LIMIT(term.scr, 0, term.histn);
+	/*
+	 * A resize changes the geometry, but the selection still holds
+	 * viewport coordinates from the old one.  Clamp it to the new
+	 * addressable range so that getsel(), selsnap() and the drawing
+	 * code never index past term.line[]/term.hist[].
+	 */
+	if (sel.ob.x != -1) {
+		LIMIT(sel.nb.x, 0, col - 1);
+		LIMIT(sel.ne.x, 0, col - 1);
+		LIMIT(sel.ob.x, 0, col - 1);
+		LIMIT(sel.oe.x, 0, col - 1);
+		LIMIT(sel.nb.y, term.scr - term.histn, term.scr + row - 1);
+		LIMIT(sel.ne.y, term.scr - term.histn, term.scr + row - 1);
+		LIMIT(sel.ob.y, term.scr - term.histn, term.scr + row - 1);
+		LIMIT(sel.oe.y, term.scr - term.histn, term.scr + row - 1);
+	}
 	/* reset scrolling region */
 	tsetscroll(0, row-1);
 	/* make use of the LIMIT in tmoveto */
